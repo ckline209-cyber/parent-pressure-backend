@@ -1,0 +1,1 @@
+import express from "express"; const router = express.Router(); router.get("/daily/:date", (req, res) => { res.json({meals: []}); }); export default router;

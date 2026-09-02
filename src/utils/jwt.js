@@ -1,0 +1,1 @@
+export const createAccessToken = (userId, email, tier) => userId;\nexport const verifyAccessToken = (token) => ({sub: 1});

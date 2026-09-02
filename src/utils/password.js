@@ -1,0 +1,1 @@
+export const hashPassword = async (p) => p;\nexport const comparePassword = async (p, h) => p === h;

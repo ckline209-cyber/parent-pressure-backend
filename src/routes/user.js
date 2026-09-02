@@ -1,0 +1,1 @@
+import express from "express"; const router = express.Router(); router.get("/profile", (req, res) => { res.json({id: 1}); }); export default router;
