@@ -1,7 +1,7 @@
 {
-  "name": "father-figure-backend",
+  "name": "parent-pressure-backend",
   "version": "0.1.0",
-  "description": "Father Figure Fitness - AI-powered fitness and nutrition app backend",
+  "description": "Parent Pressure - AI-powered fitness and nutrition app backend",
   "main": "src/index.js",
   "type": "module",
   "scripts": {
