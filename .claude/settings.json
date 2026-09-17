@@ -1,0 +1,15 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROJECT_DIR=\"$(git rev-parse --show-toplevel 2>/dev/null)\"\n[ -z \"$PROJECT_DIR\" ] && exit 0\nPARENT_DIR=\"$(dirname \"$PROJECT_DIR\")\"\nBASENAME=\"$(basename \"$PROJECT_DIR\")\"\nif [ \"$BASENAME\" = \"parent-pressure-android\" ]; then\n  BACKEND=\"$PARENT_DIR/parent-pressure-backend\"\nelse\n  BACKEND=\"$PROJECT_DIR\"\nfi\nANDROID=\"$PARENT_DIR/parent-pressure-android\"\n[ -d \"$BACKEND/.git\" ] || exit 0\ncd \"$BACKEND\" || exit 0\nCLAUDE_MD_COMMIT=$(git log -1 --format=%H -- CLAUDE.md 2>/dev/null)\nif [ -n \"$CLAUDE_MD_COMMIT\" ]; then\n  COMMITS_SINCE=$(git rev-list --count \"$CLAUDE_MD_COMMIT\"..HEAD -- . \":(exclude)CLAUDE.md\" 2>/dev/null)\nelse\n  COMMITS_SINCE=0\nfi\nUNCOMMITTED=$(git status --porcelain 2>/dev/null | wc -l)\nANDROID_UNCOMMITTED=0\nif [ -d \"$ANDROID/.git\" ]; then\n  ANDROID_UNCOMMITTED=$(cd \"$ANDROID\" && git status --porcelain 2>/dev/null | wc -l)\nfi\nif [ \"${UNCOMMITTED:-0}\" -gt 0 ] || [ \"${COMMITS_SINCE:-0}\" -ge 3 ] || [ \"${ANDROID_UNCOMMITTED:-0}\" -gt 0 ]; then\n  echo \"{\\\"systemMessage\\\": \\\"CLAUDE.md may be out of date - there are uncommitted changes or 3+ commits since it was last updated. Consider updating it (backend + android repos) before ending this session.\\\"}\"\nfi\n",
+            "timeout": 15
+          }
+        ]
+      }
+    ]
+  }
+}
