@@ -1,7 +1,8 @@
 import express from 'express';
 import pool from '../db/connection.js';
-import { authenticate } from '../middleware/auth.js';
+import { authenticate, requirePremium } from '../middleware/auth.js';
 import { AppError } from '../middleware/errorHandler.js';
+import { getPersonalizedProgression, isAiCoachAvailable } from '../utils/aiCoach.js';
 
 const router = express.Router();
 
@@ -178,76 +179,129 @@ router.post('/logs', authenticate, async (req, res, next) => {
 // Weight-bearing exercises progress by adding weight; bodyweight exercises (no logged weight) progress by reps.
 const WEIGHT_INCREMENT_KG = 2.5;
 
+async function computeBaseProgression(exerciseId, userId) {
+  const exerciseResult = await pool.query(
+    'SELECT id, name, target_reps FROM exercises WHERE id = $1',
+    [exerciseId]
+  );
+  const exercise = exerciseResult.rows[0];
+  if (!exercise) {
+    throw new AppError('not_found', 'Exercise not found', 404);
+  }
+
+  const lastLogResult = await pool.query(
+    `SELECT el.reps_per_set, el.weight_used_kg, el.rpe
+     FROM exercise_logs el
+     JOIN user_workouts uw ON uw.id = el.user_workout_id
+     WHERE el.exercise_id = $1 AND uw.user_id = $2
+     ORDER BY el.logged_at DESC LIMIT 1`,
+    [exerciseId, userId]
+  );
+  const lastLog = lastLogResult.rows[0];
+  const targetReps = exercise.target_reps;
+
+  if (!lastLog) {
+    return {
+      exercise,
+      exercise_id: exerciseId,
+      has_history: false,
+      suggested_weight_kg: null,
+      suggested_reps: targetReps,
+      rationale: 'No previous log for this exercise yet - start with a comfortable weight and log your first set.',
+    };
+  }
+
+  const repsPerSet = lastLog.reps_per_set || [];
+  const hitAllSets = targetReps != null && repsPerSet.length > 0 && repsPerSet.every((r) => r >= targetReps);
+  const rpe = lastLog.rpe;
+  const rpeOk = rpe === null || rpe === undefined || rpe <= 8;
+  const lastWeight = lastLog.weight_used_kg !== null ? Number(lastLog.weight_used_kg) : null;
+
+  let suggestedWeight = lastWeight;
+  let suggestedReps = targetReps;
+  let rationale;
+
+  if (lastWeight === null) {
+    if (hitAllSets && rpeOk) {
+      suggestedReps = targetReps + 1;
+      rationale = `You hit ${targetReps}+ reps on every set last time - try ${suggestedReps} reps next session.`;
+    } else {
+      rationale = `You didn't hit ${targetReps} reps on every set last time - repeat the same target and focus on form.`;
+    }
+  } else if (hitAllSets && rpeOk) {
+    suggestedWeight = lastWeight + WEIGHT_INCREMENT_KG;
+    rationale = `You hit ${targetReps}+ reps on every set at ${lastWeight}kg${rpe != null ? ` (RPE ${rpe})` : ''} - try ${suggestedWeight}kg next session.`;
+  } else if (hitAllSets) {
+    rationale = `You hit your reps but RPE was ${rpe} - repeat ${lastWeight}kg until it feels easier before adding weight.`;
+  } else {
+    rationale = `You didn't hit ${targetReps} reps on every set at ${lastWeight}kg - repeat ${lastWeight}kg and aim to complete all sets.`;
+  }
+
+  return {
+    exercise,
+    exercise_id: exerciseId,
+    has_history: true,
+    last_weight_kg: lastWeight,
+    last_reps_per_set: repsPerSet,
+    last_rpe: rpe ?? null,
+    suggested_weight_kg: suggestedWeight,
+    suggested_reps: suggestedReps,
+    rationale,
+  };
+}
+
 router.get('/exercises/:id/progression', authenticate, async (req, res, next) => {
   try {
-    const { id: exerciseId } = req.params;
+    const { exercise, ...base } = await computeBaseProgression(req.params.id, req.user.sub);
+    res.json(base);
+  } catch (err) {
+    next(err);
+  }
+});
 
-    const exerciseResult = await pool.query(
-      'SELECT id, name, target_reps FROM exercises WHERE id = $1',
-      [exerciseId]
-    );
-    const exercise = exerciseResult.rows[0];
-    if (!exercise) {
-      throw new AppError('not_found', 'Exercise not found', 404);
+// Paid-tier feature: an LLM personalization layer on top of the deterministic rule above.
+// The rule computes the arithmetic; the model only adjusts for context the rule can't see
+// (reported soreness, a plateau across recent sessions) - never used for the base math itself.
+router.post('/exercises/:id/personalize', authenticate, requirePremium, async (req, res, next) => {
+  try {
+    const { id: exerciseId } = req.params;
+    const { soreness, notes } = req.body ?? {};
+
+    const { exercise, ...base } = await computeBaseProgression(exerciseId, req.user.sub);
+
+    if (!isAiCoachAvailable()) {
+      return res.json({ exercise_id: exerciseId, base, personalized: null, ai_available: false });
     }
 
-    const lastLogResult = await pool.query(
+    const historyResult = await pool.query(
       `SELECT el.reps_per_set, el.weight_used_kg, el.rpe
        FROM exercise_logs el
        JOIN user_workouts uw ON uw.id = el.user_workout_id
        WHERE el.exercise_id = $1 AND uw.user_id = $2
-       ORDER BY el.logged_at DESC LIMIT 1`,
+       ORDER BY el.logged_at DESC LIMIT 5`,
       [exerciseId, req.user.sub]
     );
-    const lastLog = lastLogResult.rows[0];
-    const targetReps = exercise.target_reps;
+    const recentHistory = historyResult.rows.reverse();
 
-    if (!lastLog) {
-      return res.json({
+    try {
+      const personalized = await getPersonalizedProgression({
+        exerciseName: exercise.name,
+        targetReps: exercise.target_reps,
+        baseSuggestion: base,
+        recentHistory,
+        soreness,
+        notes,
+      });
+      res.json({ exercise_id: exerciseId, base, personalized, ai_available: true });
+    } catch (aiError) {
+      res.json({
         exercise_id: exerciseId,
-        has_history: false,
-        suggested_weight_kg: null,
-        suggested_reps: targetReps,
-        rationale: 'No previous log for this exercise yet - start with a comfortable weight and log your first set.',
+        base,
+        personalized: null,
+        ai_available: false,
+        ai_error: aiError.message,
       });
     }
-
-    const repsPerSet = lastLog.reps_per_set || [];
-    const hitAllSets = targetReps != null && repsPerSet.length > 0 && repsPerSet.every((r) => r >= targetReps);
-    const rpe = lastLog.rpe;
-    const rpeOk = rpe === null || rpe === undefined || rpe <= 8;
-    const lastWeight = lastLog.weight_used_kg !== null ? Number(lastLog.weight_used_kg) : null;
-
-    let suggestedWeight = lastWeight;
-    let suggestedReps = targetReps;
-    let rationale;
-
-    if (lastWeight === null) {
-      if (hitAllSets && rpeOk) {
-        suggestedReps = targetReps + 1;
-        rationale = `You hit ${targetReps}+ reps on every set last time - try ${suggestedReps} reps next session.`;
-      } else {
-        rationale = `You didn't hit ${targetReps} reps on every set last time - repeat the same target and focus on form.`;
-      }
-    } else if (hitAllSets && rpeOk) {
-      suggestedWeight = lastWeight + WEIGHT_INCREMENT_KG;
-      rationale = `You hit ${targetReps}+ reps on every set at ${lastWeight}kg${rpe != null ? ` (RPE ${rpe})` : ''} - try ${suggestedWeight}kg next session.`;
-    } else if (hitAllSets) {
-      rationale = `You hit your reps but RPE was ${rpe} - repeat ${lastWeight}kg until it feels easier before adding weight.`;
-    } else {
-      rationale = `You didn't hit ${targetReps} reps on every set at ${lastWeight}kg - repeat ${lastWeight}kg and aim to complete all sets.`;
-    }
-
-    res.json({
-      exercise_id: exerciseId,
-      has_history: true,
-      last_weight_kg: lastWeight,
-      last_reps_per_set: repsPerSet,
-      last_rpe: rpe ?? null,
-      suggested_weight_kg: suggestedWeight,
-      suggested_reps: suggestedReps,
-      rationale,
-    });
   } catch (err) {
     next(err);
   }
