@@ -50,8 +50,10 @@ AI-powered fitness and nutrition "one stop shop" app. Core features:
 - **Backend:** this repo — `parent-pressure-backend` (github.com/ckline209-cyber/parent-pressure-backend), local path `C:\Users\cklin\OneDrive\Documents\GitHub\parent-pressure-backend`
 - **Android:** `parent-pressure-android` (github.com/ckline209-cyber/parent-pressure-android), local path `C:\Users\cklin\OneDrive\Documents\GitHub\parent-pressure-android` — sibling folder to this repo
 
-## Status as of last session (Sep 17–18, 2026)
-Hardware was upgraded (or the dev environment moved) since last session — this machine has **~5.83GB RAM** (still under Android Studio's stated 8GB minimum, but enough to actually work, unlike the prior ~3.7GB machine). Android Studio opened, synced, and ran an emulator successfully this session. All three previously-stubbed feature routes are now real and fully wired end-to-end (backend + Android), tested live on an emulator, committed, and pushed:
+## Status as of last session (Sep 17–19, 2026)
+Hardware was upgraded (or the dev environment moved) since the prior session — this machine has **~5.83GB RAM** (still under Android Studio's stated 8GB minimum, but enough to actually work, unlike the prior ~3.7GB machine). Android Studio opened, synced, and ran an emulator successfully this session. All three previously-stubbed feature routes plus exercise logging are now real and fully wired end-to-end (backend + Android), tested live on an emulator, committed, and pushed:
+
+- ✅ **Exercise logging** (the item that was top of Next Steps): `GET /workouts/started/:id` (a started workout's exercises plus any logs so far), `POST /workouts/logs` (sets/reps-per-set/weight/RPE against an exercise, validating the requester owns the `user_workout` and the exercise exists), `PATCH /workouts/started/:id/complete`. Android's workouts screen now navigates to a new "Log Exercises" screen once a workout is started (tracked via a `workoutId -> userWorkoutId` map in `WorkoutsViewModel`), which lists each exercise with a reps/weight/RPE form and a "Complete Workout" button. Verified live end-to-end: started a workout, logged a real set on Barbell Back Squat, confirmed the row in `exercise_logs`, tapped Complete, confirmed `completed_date` set in `user_workouts`.
 
 - ✅ **`GET /workouts`** now returns the real seeded stock workouts with nested exercises (was a hardcoded `{workouts: []}` stub). Added **`POST /workouts/:id/start`**, which inserts a `user_workouts` row to assign/start a workout for the logged-in user.
 - ✅ **Android workouts screen** (`workouts/WorkoutsScreen.kt`, `WorkoutsViewModel.kt`): lists workouts with exercises, "Start Workout" button per card with loading/started state. Verified live: tapped Start on both stock workouts, confirmed real `user_workouts` rows landed in Postgres.
@@ -75,10 +77,11 @@ Hardware was upgraded (or the dev environment moved) since last session — this
 - **`.env` is NOT in git, by design** — it only exists locally under `OneDrive\Documents\GitHub\parent-pressure-backend\.env`, mirrored via OneDrive sync. If moving machines again: confirm OneDrive shows "up to date," and/or save `DATABASE_URL`/`JWT_SECRET` somewhere separate as a cheap safety net.
 
 ## Next Steps (in order)
-1. **Exercise logging** (`exercise_logs` table already exists) — let a user log actual sets/reps/weight/RPE against an exercise within a started workout. This is the prerequisite for progressive overload; the plan discussed is a deterministic rule-based progression algorithm first (free tier), with an LLM layered on top later for personalization/explanation (paid tier), not an LLM doing the arithmetic itself.
+1. **Progressive overload logic**, now that exercise logging exists. Plan discussed: a deterministic rule-based progression algorithm first (free tier, e.g. "add weight when last session hit target reps at RPE ≤8"), with an LLM layered on top later for personalization/explanation (paid tier), not an LLM doing the arithmetic itself. Will need to read from `exercise_logs` history per user+exercise.
 2. Real Google Play Billing integration for `subscription.js` (receipt/purchase token verification) before this is production-ready — current `upgrade`/`cancel` endpoints are real DB writes but don't verify any actual payment.
 3. Minor UI polish noticed but not fixed: the "Snack" meal-type chip in the nutrition Log Food dialog is cut off/needs scrolling (4 `FilterChip`s don't fit the dialog width).
 4. `daily_nutrition_targets` table exists but has no endpoints yet — not needed until diet customization/AI meal planning is built.
+5. The exercise logging UI logs one set at a time per exercise with no way to edit/delete a mis-entered log — fine for MVP data collection, but worth a delete endpoint/button if wrong entries become a real annoyance.
 
 ## Known Constraints
 - Limited starting capital — overhead budgeted around $200 (developer accounts + hosting)
