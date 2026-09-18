@@ -174,4 +174,83 @@ router.post('/logs', authenticate, async (req, res, next) => {
   }
 });
 
+// Deterministic rule-based progression, not an LLM call - see CLAUDE.md next-steps rationale.
+// Weight-bearing exercises progress by adding weight; bodyweight exercises (no logged weight) progress by reps.
+const WEIGHT_INCREMENT_KG = 2.5;
+
+router.get('/exercises/:id/progression', authenticate, async (req, res, next) => {
+  try {
+    const { id: exerciseId } = req.params;
+
+    const exerciseResult = await pool.query(
+      'SELECT id, name, target_reps FROM exercises WHERE id = $1',
+      [exerciseId]
+    );
+    const exercise = exerciseResult.rows[0];
+    if (!exercise) {
+      throw new AppError('not_found', 'Exercise not found', 404);
+    }
+
+    const lastLogResult = await pool.query(
+      `SELECT el.reps_per_set, el.weight_used_kg, el.rpe
+       FROM exercise_logs el
+       JOIN user_workouts uw ON uw.id = el.user_workout_id
+       WHERE el.exercise_id = $1 AND uw.user_id = $2
+       ORDER BY el.logged_at DESC LIMIT 1`,
+      [exerciseId, req.user.sub]
+    );
+    const lastLog = lastLogResult.rows[0];
+    const targetReps = exercise.target_reps;
+
+    if (!lastLog) {
+      return res.json({
+        exercise_id: exerciseId,
+        has_history: false,
+        suggested_weight_kg: null,
+        suggested_reps: targetReps,
+        rationale: 'No previous log for this exercise yet - start with a comfortable weight and log your first set.',
+      });
+    }
+
+    const repsPerSet = lastLog.reps_per_set || [];
+    const hitAllSets = targetReps != null && repsPerSet.length > 0 && repsPerSet.every((r) => r >= targetReps);
+    const rpe = lastLog.rpe;
+    const rpeOk = rpe === null || rpe === undefined || rpe <= 8;
+    const lastWeight = lastLog.weight_used_kg !== null ? Number(lastLog.weight_used_kg) : null;
+
+    let suggestedWeight = lastWeight;
+    let suggestedReps = targetReps;
+    let rationale;
+
+    if (lastWeight === null) {
+      if (hitAllSets && rpeOk) {
+        suggestedReps = targetReps + 1;
+        rationale = `You hit ${targetReps}+ reps on every set last time - try ${suggestedReps} reps next session.`;
+      } else {
+        rationale = `You didn't hit ${targetReps} reps on every set last time - repeat the same target and focus on form.`;
+      }
+    } else if (hitAllSets && rpeOk) {
+      suggestedWeight = lastWeight + WEIGHT_INCREMENT_KG;
+      rationale = `You hit ${targetReps}+ reps on every set at ${lastWeight}kg${rpe != null ? ` (RPE ${rpe})` : ''} - try ${suggestedWeight}kg next session.`;
+    } else if (hitAllSets) {
+      rationale = `You hit your reps but RPE was ${rpe} - repeat ${lastWeight}kg until it feels easier before adding weight.`;
+    } else {
+      rationale = `You didn't hit ${targetReps} reps on every set at ${lastWeight}kg - repeat ${lastWeight}kg and aim to complete all sets.`;
+    }
+
+    res.json({
+      exercise_id: exerciseId,
+      has_history: true,
+      last_weight_kg: lastWeight,
+      last_reps_per_set: repsPerSet,
+      last_rpe: rpe ?? null,
+      suggested_weight_kg: suggestedWeight,
+      suggested_reps: suggestedReps,
+      rationale,
+    });
+  } catch (err) {
+    next(err);
+  }
+});
+
 export default router;
