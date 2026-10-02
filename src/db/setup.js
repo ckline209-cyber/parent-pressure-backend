@@ -125,8 +125,18 @@ CREATE TABLE IF NOT EXISTS subscription_events (
   subscription_tier VARCHAR(50),
   amount_usd DECIMAL(7,2),
   google_play_order_id VARCHAR(255),
+  google_play_purchase_token VARCHAR(500),
   event_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
+
+-- Added for real Google Play purchase verification (replacing the client-trusted
+-- upgrade/cancel flow). ALTER ... ADD COLUMN IF NOT EXISTS keeps this idempotent for
+-- databases that already ran the original CREATE TABLE above.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_play_purchase_token VARCHAR(500);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_play_product_id VARCHAR(255);
+ALTER TABLE users ADD COLUMN IF NOT EXISTS google_play_base_plan_id VARCHAR(255);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_google_play_purchase_token
+  ON users(google_play_purchase_token) WHERE google_play_purchase_token IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_user_workouts_user_id ON user_workouts(user_id);
