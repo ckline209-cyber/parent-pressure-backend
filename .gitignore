@@ -5,3 +5,7 @@ node_modules/
 npm-debug.log*
 *.log
 .DS_Store
+
+# Google Play service account key - never commit this. Save the downloaded JSON
+# here and point GOOGLE_PLAY_SERVICE_ACCOUNT_KEY_FILE in .env at it.
+secrets/
